@@ -652,6 +652,7 @@ static int ssd16xx_init(const struct device *dev)
 		LOG_ERR("Could not get SPI device for SSD16XX");
 		return -EIO;
 	}
+	return 0;
 
 	driver->spi_config.frequency = SSD16XX_SPI_FREQ;
 	driver->spi_config.operation = SPI_OP_MODE_MASTER | SPI_WORD_SET(8);
