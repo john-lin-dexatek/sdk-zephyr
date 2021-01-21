@@ -541,20 +541,22 @@ static int ssd16xx_load_ws_default(const struct device *dev)
 #define yDot 200
 
 uint8_t GDOControl[]={(yDot-1)%256,(yDot-1)/256,0x00}; //for 1.54inch
-uint8_t softstart[]={0x0c,0xd7,0xd6,0x9d};
-uint8_t Rambypass[] = {0x21,0x8f};		// Display update
-uint8_t MAsequency[] = {0x22,0xf0};		// clock 
-uint8_t GDVol[] = {0x03,0x00};	// Gate voltage +15V/-15V
-uint8_t SDVol[] = {0x04,0x0a};	// Source voltage +15V/-15V
-uint8_t VCOMVol[] = {0x2c,0xa8};	// VCOM 7c
-uint8_t BOOSTERFB[] = {0xf0,0x1f};	// Source voltage +15V/-15V
-uint8_t DummyLine[] = {0x3a,0x1a};	// 4 dummy line per gate
-uint8_t Gatetime[] = {0x3b,0x08};	// 2us per line
-uint8_t BorderWavefrom[] = {0x3c,0x05};	// Border
-uint8_t RamDataEntryMode[] = {0x11,0x01};	// Ram data entry mode
-uint8_t DeepSleepOn[] = { 0x10, 1 };
-uint8_t DeepSleepOff[] = { 0x10, 0 };
-uint8_t temperatureSetting[] = {0x18,0x80};	// temperature
+uint8_t RamDataEntryMode[] = {0x01};	// Ram data entry mode
+uint8_t BorderWaveform[] = {0x05};	// Border
+uint8_t temperatureSetting[] = {0x80};	// temperature
+
+// uint8_t softstart[]={0x0c,0xd7,0xd6,0x9d};
+// uint8_t Rambypass[] = {0x21,0x8f};		// Display update
+// uint8_t MAsequency[] = {0x22,0xf0};		// clock 
+// uint8_t GDVol[] = {0x03,0x00};	// Gate voltage +15V/-15V
+// uint8_t SDVol[] = {0x04,0x0a};	// Source voltage +15V/-15V
+// uint8_t VCOMVol[] = {0x2c,0xa8};	// VCOM 7c
+// uint8_t BOOSTERFB[] = {0xf0,0x1f};	// Source voltage +15V/-15V
+// uint8_t DummyLine[] = {0x3a,0x1a};	// 4 dummy line per gate
+// uint8_t Gatetime[] = {0x3b,0x08};	// 2us per line
+// uint8_t DeepSleepOn[] = { 0x10, 1 };
+// uint8_t DeepSleepOff[] = { 0x10, 0 };
+
 
 static int ssd16xx_controller_init(const struct device *dev)
 {
@@ -575,13 +577,39 @@ static int ssd16xx_controller_init(const struct device *dev)
 	if (err < 0) {
 		return err;
 	}
-	ssd16xx_busy_wait(driver);
-	LOG_INF("SSD16xx init ok");
+	ssd16xx_busy_wait(driver);	
 	
-	// err = ssd16xx_write_cmd(driver, SSD16XX_CMD_GDO_CTRL, GDOControl, sizeof(GDOControl));
-	// if (err < 0) {
-	// 	return err;
-	// }
+	err = ssd16xx_write_cmd(driver, SSD16XX_CMD_GDO_CTRL, GDOControl, sizeof(GDOControl));
+	if (err < 0) {
+		return err;
+	}
+	ssd16xx_busy_wait(driver);
+
+	err = ssd16xx_write_cmd(driver, SSD16XX_CMD_ENTRY_MODE, RamDataEntryMode, sizeof(RamDataEntryMode));
+	if (err < 0) {
+		return err;
+	}
+	ssd16xx_busy_wait(driver);
+
+	err = ssd16xx_set_ram_param(driver, 0, (xDot-1)/8,  yDot-1, 0);
+	if (err < 0) {
+		return err;
+	}
+	ssd16xx_busy_wait(driver);
+
+	err = ssd16xx_write_cmd(driver, SSD16XX_CMD_BWF_CTRL, BorderWaveform, sizeof(BorderWaveform));
+	if (err < 0) {
+		return err;
+	}
+	ssd16xx_busy_wait(driver);
+
+	err = ssd16xx_write_cmd(driver, SSD16XX_CMD_TSENSOR_SELECTION, temperatureSetting, sizeof(temperatureSetting));
+	if (err < 0) {
+		return err;
+	}
+	ssd16xx_busy_wait(driver);
+
+	LOG_INF("JOHN: SSD16xx init ok");
 	return 0;
 	///////////////TEMP BY JOHN	/////////////////////////////////
 
