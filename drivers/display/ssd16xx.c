@@ -536,6 +536,26 @@ static int ssd16xx_load_ws_default(const struct device *dev)
 	return 0;
 }
 
+
+#define xDot 200
+#define yDot 200
+
+uint8_t GDOControl[]={(yDot-1)%256,(yDot-1)/256,0x00}; //for 1.54inch
+uint8_t softstart[]={0x0c,0xd7,0xd6,0x9d};
+uint8_t Rambypass[] = {0x21,0x8f};		// Display update
+uint8_t MAsequency[] = {0x22,0xf0};		// clock 
+uint8_t GDVol[] = {0x03,0x00};	// Gate voltage +15V/-15V
+uint8_t SDVol[] = {0x04,0x0a};	// Source voltage +15V/-15V
+uint8_t VCOMVol[] = {0x2c,0xa8};	// VCOM 7c
+uint8_t BOOSTERFB[] = {0xf0,0x1f};	// Source voltage +15V/-15V
+uint8_t DummyLine[] = {0x3a,0x1a};	// 4 dummy line per gate
+uint8_t Gatetime[] = {0x3b,0x08};	// 2us per line
+uint8_t BorderWavefrom[] = {0x3c,0x05};	// Border
+uint8_t RamDataEntryMode[] = {0x11,0x01};	// Ram data entry mode
+uint8_t DeepSleepOn[] = { 0x10, 1 };
+uint8_t DeepSleepOff[] = { 0x10, 0 };
+uint8_t temperatureSetting[] = {0x18,0x80};	// temperature
+
 static int ssd16xx_controller_init(const struct device *dev)
 {
 	int err;
@@ -549,13 +569,21 @@ static int ssd16xx_controller_init(const struct device *dev)
 	k_msleep(SSD16XX_RESET_DELAY);
 	gpio_pin_set(driver->reset, SSD16XX_RESET_PIN, 0);
 	k_msleep(SSD16XX_RESET_DELAY);
-	ssd16xx_busy_wait(driver);
+	ssd16xx_busy_wait(driver);	
 
 	err = ssd16xx_write_cmd(driver, SSD16XX_CMD_SW_RESET, NULL, 0);
 	if (err < 0) {
 		return err;
 	}
 	ssd16xx_busy_wait(driver);
+	LOG_INF("SSD16xx init ok");
+	
+	// err = ssd16xx_write_cmd(driver, SSD16XX_CMD_GDO_CTRL, GDOControl, sizeof(GDOControl));
+	// if (err < 0) {
+	// 	return err;
+	// }
+	return 0;
+	///////////////TEMP BY JOHN	/////////////////////////////////
 
 	len = push_y_param(tmp, SSD16XX_PANEL_LAST_GATE);
 	tmp[len++] = 0U;
@@ -652,7 +680,6 @@ static int ssd16xx_init(const struct device *dev)
 		LOG_ERR("Could not get SPI device for SSD16XX");
 		return -EIO;
 	}
-	return 0;
 
 	driver->spi_config.frequency = SSD16XX_SPI_FREQ;
 	driver->spi_config.operation = SPI_OP_MODE_MASTER | SPI_WORD_SET(8);
