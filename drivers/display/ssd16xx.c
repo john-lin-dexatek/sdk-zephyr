@@ -65,6 +65,8 @@ struct ssd16xx_data {
 	struct spi_config spi_config;
 	uint8_t scan_mode;
 	uint8_t update_cmd;
+	uint8_t repeat_pattern;
+	uint8_t border_waveform;
 };
 
 #if DT_INST_NODE_HAS_PROP(0, lut_initial)
@@ -78,6 +80,15 @@ static uint8_t ssd16xx_softstart[] = DT_INST_PROP(0, softstart);
 #endif
 static uint8_t ssd16xx_gdv[] = DT_INST_PROP(0, gdv);
 static uint8_t ssd16xx_sdv[] = DT_INST_PROP(0, sdv);
+
+///////////////////////////////////////////////////////////////////////////
+#define xDot 200
+#define yDot 200
+
+uint8_t GDOControl[]={(yDot-1)%256,(yDot-1)/256,0x00}; //for 1.54inch
+uint8_t RamDataEntryMode[] = {0x01};	// Ram data entry mode
+uint8_t BorderWaveform[] = {0x05};	// Border
+uint8_t temperatureSetting[] = {0x80};	// temperature
 
 static inline int ssd16xx_write_cmd(struct ssd16xx_data *driver,
 				    uint8_t cmd, uint8_t *data, size_t len)
@@ -94,7 +105,19 @@ static inline int ssd16xx_write_cmd(struct ssd16xx_data *driver,
 		return err;
 	}
 
-	if (data != NULL) {
+	if (data == NULL && len) {  //repeat pattern
+		buf.buf = &driver->repeat_pattern;
+		buf.len = 1;
+		gpio_pin_set(driver->dc, SSD16XX_DC_PIN, 0);
+		while (len--) {
+			err = spi_write(driver->spi_dev, &driver->spi_config, &buf_set);
+			if (err < 0) {
+				gpio_pin_set(driver->dc, SSD16XX_CS_PIN, 0);
+				return err;
+			}
+		}
+	}
+	else if (data != NULL) {
 		buf.buf = data;
 		buf.len = len;
 		gpio_pin_set(driver->dc, SSD16XX_DC_PIN, 0);
@@ -211,6 +234,13 @@ static int ssd16xx_update_display(const struct device *dev)
 {
 	struct ssd16xx_data *driver = dev->data;
 	int err;
+
+	// err = ssd16xx_write_cmd(driver, SSD16XX_CMD_BWF_CTRL, &driver->border_waveform, 1);
+	// if (err < 0) {
+	// 	return err;
+	// }
+
+	ssd16xx_busy_wait(driver);
 
 	err = ssd16xx_write_cmd(driver, SSD16XX_CMD_UPDATE_CTRL2,
 				&driver->update_cmd, 1);
@@ -387,12 +417,10 @@ static int ssd16xx_clear_cntlr_mem(const struct device *dev, uint8_t ram_cmd,
 				   bool update)
 {
 	struct ssd16xx_data *driver = dev->data;
-	uint8_t clear_page[EPD_PANEL_WIDTH];
+	// uint8_t clear_page[EPD_PANEL_WIDTH];
 	uint16_t panel_h = EPD_PANEL_HEIGHT /
 			EPD_PANEL_NUMOF_ROWS_PER_PAGE;
-	uint16_t panel_w = EPD_PANEL_WIDTH /
-			EPD_PANEL_NUMOF_ROWS_PER_PAGE;
-	uint8_t scan_mode = SSD16XX_DATA_ENTRY_XIYDY;
+	// uint8_t scan_mode = SSD16XX_DATA_ENTRY_XIYDY;
 
 	/*
 	 * Clear unusable memory area when the resolution of the panel is not
@@ -402,29 +430,38 @@ static int ssd16xx_clear_cntlr_mem(const struct device *dev, uint8_t ram_cmd,
 		panel_h += 1;
 	}
 
-	if (ssd16xx_write_cmd(driver, SSD16XX_CMD_ENTRY_MODE, &scan_mode, 1)) {
-		return -EIO;
-	}
+	// if (ssd16xx_write_cmd(driver, SSD16XX_CMD_ENTRY_MODE, &scan_mode, 1)) {
+	// 	return -EIO;
+	// }
 
-	if (ssd16xx_set_ram_param(driver, SSD16XX_PANEL_FIRST_PAGE,
-				  panel_w - 1,
-				  SSD16XX_PANEL_LAST_GATE,
-				  SSD16XX_PANEL_FIRST_GATE)) {
-		return -EIO;
-	}
+	// if (ssd16xx_set_ram_param(driver, SSD16XX_PANEL_FIRST_PAGE,
+	// 			  panel_h - 1,
+	// 			  SSD16XX_PANEL_LAST_GATE,
+	// 			  SSD16XX_PANEL_FIRST_GATE)) {
+	// 	return -EIO;
+	// }
+
+	ssd16xx_busy_wait(driver);
 
 	if (ssd16xx_set_ram_ptr(driver, SSD16XX_PANEL_FIRST_PAGE,
 				SSD16XX_PANEL_LAST_GATE)) {
 		return -EIO;
 	}
 
-
-	memset(clear_page, 0xff, sizeof(clear_page));
-	for (int i = 0; i < panel_h; i++) {
-		if (ssd16xx_write_cmd(driver, ram_cmd, clear_page,
-				      sizeof(clear_page))) {
+	driver->repeat_pattern = 0xff;
+	if (ssd16xx_write_cmd(driver, ram_cmd, NULL, 200*25)) {
 			return -EIO;
-		}
+	}
+
+	ssd16xx_busy_wait(driver);
+
+	if (ssd16xx_set_ram_ptr(driver, SSD16XX_PANEL_FIRST_PAGE,
+				SSD16XX_PANEL_LAST_GATE)) {
+		return -EIO;
+	}
+
+	if (ssd16xx_write_cmd(driver, SSD16XX_CMD_WRITE_RED_RAM, NULL, 200*25)) {
+			return -EIO;
 	}
 
 	if (update) {
@@ -537,15 +574,6 @@ static int ssd16xx_load_ws_default(const struct device *dev)
 	return 0;
 }
 
-
-#define xDot 200
-#define yDot 200
-
-uint8_t GDOControl[]={(yDot-1)%256,(yDot-1)/256,0x00}; //for 1.54inch
-uint8_t RamDataEntryMode[] = {0x01};	// Ram data entry mode
-uint8_t BorderWaveform[] = {0x05};	// Border
-uint8_t temperatureSetting[] = {0x80};	// temperature
-
 static int ssd16xx_controller_init(const struct device *dev)
 {
 	int err;
@@ -554,7 +582,6 @@ static int ssd16xx_controller_init(const struct device *dev)
 	struct ssd16xx_data *driver = dev->data;
 
 	LOG_DBG("");
-
 	gpio_pin_set(driver->reset, SSD16XX_RESET_PIN, 1);
 	k_msleep(SSD16XX_RESET_DELAY);
 	gpio_pin_set(driver->reset, SSD16XX_RESET_PIN, 0);
@@ -590,6 +617,7 @@ static int ssd16xx_controller_init(const struct device *dev)
 		return err;
 	}
 	ssd16xx_busy_wait(driver);
+	driver->border_waveform = 0x80;
 
 	err = ssd16xx_write_cmd(driver, SSD16XX_CMD_TSENSOR_SELECTION, temperatureSetting, sizeof(temperatureSetting));
 	if (err < 0) {
@@ -597,32 +625,15 @@ static int ssd16xx_controller_init(const struct device *dev)
 	}
 	ssd16xx_busy_wait(driver);
 
-	// tmp[0] = 0xb1;
-	// err = ssd16xx_write_cmd(driver, SSD16XX_CMD_UPDATE_CTRL2, tmp, 1);
-	// if (err < 0) {
-	// 	return err;
-	// }
-	// ssd16xx_busy_wait(driver);
+	driver->update_cmd = 0xB1;
+	ssd16xx_update_display(dev);
+	driver->update_cmd = 0xF7;
 
-	// err = ssd16xx_write_cmd(driver, SSD16XX_CMD_MASTER_ACTIVATION, NULL, 0);
-	// if (err < 0) {
-	// 	return err;
-	// }
-	// ssd16xx_busy_wait(driver);
-	// driver->update_cmd = 0xFF;
-
-	// err = ssd16xx_clear_cntlr_mem(dev, SSD16XX_CMD_WRITE_RAM, true);
-	// if (err < 0) {
-	// 	return err;
-	// }
-	// ssd16xx_busy_wait(driver);
-
-	// err = ssd16xx_clear_cntlr_mem(dev, SSD16XX_CMD_WRITE_RED_RAM,
-	// 				     false);
-	// if (err < 0) {
-	// 	return err;
-	// }
-	// ssd16xx_busy_wait(driver);
+	err = ssd16xx_clear_cntlr_mem(dev, SSD16XX_CMD_WRITE_RAM, true);
+	if (err < 0) {
+		return err;
+	}
+	ssd16xx_busy_wait(driver);
 
 	LOG_INF("JOHN: SSD16xx init ok");
 	return 0;
