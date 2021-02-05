@@ -36,6 +36,9 @@ LOG_MODULE_REGISTER(ssd16xx);
 #define SSD16XX_BUSY_PIN DT_INST_GPIO_PIN(0, busy_gpios)
 #define SSD16XX_BUSY_CNTRL DT_INST_GPIO_LABEL(0, busy_gpios)
 #define SSD16XX_BUSY_FLAGS DT_INST_GPIO_FLAGS(0, busy_gpios)
+#define SSD16XX_TRIGGER_PIN DT_INST_GPIO_PIN(0, trigger_gpios)
+#define SSD16XX_TRIGGER_CNTRL DT_INST_GPIO_LABEL(0, trigger_gpios)
+#define SSD16XX_TRIGGER_FLAGS DT_INST_GPIO_FLAGS(0, trigger_gpios)
 #define SSD16XX_RESET_PIN DT_INST_GPIO_PIN(0, reset_gpios)
 #define SSD16XX_RESET_CNTRL DT_INST_GPIO_LABEL(0, reset_gpios)
 #define SSD16XX_RESET_FLAGS DT_INST_GPIO_FLAGS(0, reset_gpios)
@@ -62,6 +65,7 @@ struct ssd16xx_data {
 	const struct device *busy;
 	const struct device *cs;
 	const struct device *spi_dev;
+	const struct device *trigger;
 	struct spi_config spi_config;
 	uint8_t scan_mode;
 	uint8_t update_cmd;
@@ -445,8 +449,7 @@ static int ssd16xx_clear_cntlr_mem(const struct device *dev, uint8_t ram_cmd,
 				SSD16XX_PANEL_LAST_GATE)) {
 		return -EIO;
 	}
-
-	driver->repeat_pattern = 0xff;
+	
 	if (ssd16xx_write_cmd(driver, ram_cmd, NULL, 200*25)) {
 			return -EIO;
 	}
@@ -628,12 +631,36 @@ static int ssd16xx_controller_init(const struct device *dev)
 	ssd16xx_update_display(dev);
 	driver->update_cmd = 0xF7;
 	gpio_pin_set(driver->dc, SSD16XX_CS_PIN, 0);
-
+	
+	driver->repeat_pattern = 0x80;
 	err = ssd16xx_clear_cntlr_mem(dev, SSD16XX_CMD_WRITE_RAM, true);
 	if (err < 0) {
 		return err;
 	}
 	ssd16xx_busy_wait(driver);
+
+	while (gpio_pin_get(driver->trigger, SSD16XX_TRIGGER_PIN)) {
+		k_msleep(SSD16XX_BUSY_DELAY);
+	}
+
+	while (1) {
+		driver->repeat_pattern = 0xFE;
+		err = ssd16xx_clear_cntlr_mem(dev, SSD16XX_CMD_WRITE_RAM, true);
+		if (err < 0) {
+			return err;
+		}
+		ssd16xx_busy_wait(driver);	
+
+		k_msleep(4000);
+
+		driver->repeat_pattern = 0x00;
+		err = ssd16xx_clear_cntlr_mem(dev, SSD16XX_CMD_WRITE_RAM, true);
+		if (err < 0) {
+			return err;
+		}
+		ssd16xx_busy_wait(driver);	
+		k_msleep(4000);
+	}	
 
 	LOG_INF("JOHN: SSD16xx init ok");
 	return 0;
@@ -775,6 +802,15 @@ static int ssd16xx_init(const struct device *dev)
 
 	gpio_pin_configure(driver->busy, SSD16XX_BUSY_PIN,
 			   GPIO_INPUT | SSD16XX_BUSY_FLAGS);
+
+	driver->trigger = device_get_binding(SSD16XX_TRIGGER_CNTRL);
+	if (driver->trigger == NULL) {
+		LOG_ERR("Could not get GPIO port for SSD16XX trigger signal");
+		return -EIO;
+	}
+
+	gpio_pin_configure(driver->trigger, SSD16XX_TRIGGER_PIN,
+			   GPIO_INPUT | SSD16XX_TRIGGER_FLAGS);
 
 	return ssd16xx_controller_init(dev);
 }
