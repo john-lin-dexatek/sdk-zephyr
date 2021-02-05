@@ -96,7 +96,8 @@ static inline int ssd16xx_write_cmd(struct ssd16xx_data *driver,
 	int err;
 	struct spi_buf buf = {.buf = &cmd, .len = sizeof(cmd)};
 	struct spi_buf_set buf_set = {.buffers = &buf, .count = 1};
-
+	
+	gpio_pin_set(driver->dc, SSD16XX_CS_PIN, 0);
 	gpio_pin_set(driver->dc, SSD16XX_CS_PIN, 1);
 	gpio_pin_set(driver->dc, SSD16XX_DC_PIN, 1);
 	err = spi_write(driver->spi_dev, &driver->spi_config, &buf_set);
@@ -112,7 +113,6 @@ static inline int ssd16xx_write_cmd(struct ssd16xx_data *driver,
 		while (len--) {
 			err = spi_write(driver->spi_dev, &driver->spi_config, &buf_set);
 			if (err < 0) {
-				gpio_pin_set(driver->dc, SSD16XX_CS_PIN, 0);
 				return err;
 			}
 		}
@@ -123,11 +123,9 @@ static inline int ssd16xx_write_cmd(struct ssd16xx_data *driver,
 		gpio_pin_set(driver->dc, SSD16XX_DC_PIN, 0);
 		err = spi_write(driver->spi_dev, &driver->spi_config, &buf_set);
 		if (err < 0) {
-			gpio_pin_set(driver->dc, SSD16XX_CS_PIN, 0);
 			return err;
 		}
 	}
-	gpio_pin_set(driver->dc, SSD16XX_CS_PIN, 0);
 	return 0;
 }
 
@@ -582,6 +580,7 @@ static int ssd16xx_controller_init(const struct device *dev)
 	struct ssd16xx_data *driver = dev->data;
 
 	LOG_DBG("");
+	gpio_pin_set(driver->dc, SSD16XX_CS_PIN, 1);
 	gpio_pin_set(driver->reset, SSD16XX_RESET_PIN, 1);
 	k_msleep(SSD16XX_RESET_DELAY);
 	gpio_pin_set(driver->reset, SSD16XX_RESET_PIN, 0);
@@ -628,6 +627,7 @@ static int ssd16xx_controller_init(const struct device *dev)
 	driver->update_cmd = 0xB1;
 	ssd16xx_update_display(dev);
 	driver->update_cmd = 0xF7;
+	gpio_pin_set(driver->dc, SSD16XX_CS_PIN, 0);
 
 	err = ssd16xx_clear_cntlr_mem(dev, SSD16XX_CMD_WRITE_RAM, true);
 	if (err < 0) {
