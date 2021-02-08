@@ -285,6 +285,13 @@ int cfb_framebuffer_init(const struct device *dev)
 	struct char_framebuffer *fb = &char_fb;
 	struct display_capabilities cfg;
 
+	api->blanking_on(dev);
+
+	return 0;
+
+	////////////// TEMP BY JOHN;
+
+
 	api->get_capabilities(dev, &cfg);
 
 	fb->numof_fonts = __font_entry_end - __font_entry_start;

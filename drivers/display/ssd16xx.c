@@ -93,6 +93,7 @@ uint8_t GDOControl[]={(yDot-1)%256,(yDot-1)/256,0x00}; //for 1.54inch
 uint8_t RamDataEntryMode[] = {0x01};	// Ram data entry mode
 uint8_t BorderWaveform[] = {0x05};	// Border
 uint8_t temperatureSetting[] = {0x80};	// temperature
+uint8_t boardSetting[] = {0x80};	// 
 
 static inline int ssd16xx_write_cmd(struct ssd16xx_data *driver,
 				    uint8_t cmd, uint8_t *data, size_t len)
@@ -101,12 +102,12 @@ static inline int ssd16xx_write_cmd(struct ssd16xx_data *driver,
 	struct spi_buf buf = {.buf = &cmd, .len = sizeof(cmd)};
 	struct spi_buf_set buf_set = {.buffers = &buf, .count = 1};
 	
-	gpio_pin_set(driver->dc, SSD16XX_CS_PIN, 0);
-	gpio_pin_set(driver->dc, SSD16XX_CS_PIN, 1);
+	gpio_pin_set(driver->cs, SSD16XX_CS_PIN, 0);
+	gpio_pin_set(driver->cs, SSD16XX_CS_PIN, 1);
 	gpio_pin_set(driver->dc, SSD16XX_DC_PIN, 1);
 	err = spi_write(driver->spi_dev, &driver->spi_config, &buf_set);
 	if (err < 0) {
-		gpio_pin_set(driver->dc, SSD16XX_CS_PIN, 0);
+		gpio_pin_set(driver->cs, SSD16XX_CS_PIN, 0);
 		return err;
 	}
 
@@ -227,9 +228,61 @@ static int ssd16xx_blanking_off(const struct device *dev)
 	return -ENOTSUP;
 }
 
+static int ssd16xx_clear_cntlr_mem(const struct device *dev, uint8_t ram_cmd,
+				   bool update, bool partial);
 static int ssd16xx_blanking_on(const struct device *dev)
 {
-	return -ENOTSUP;
+	struct ssd16xx_data *driver = dev->data;
+	int err;		
+	static int always_on = 0;
+	static uint8_t fading_pattern = 0x00;
+	int counter;
+
+	if (always_on) {
+		driver->repeat_pattern = 0xFE;
+		err = ssd16xx_clear_cntlr_mem(dev, SSD16XX_CMD_WRITE_RAM, true, false);
+		ssd16xx_busy_wait(driver);
+		k_msleep(3000);
+
+		driver->repeat_pattern = 0x80;
+		err = ssd16xx_clear_cntlr_mem(dev, SSD16XX_CMD_WRITE_RAM, true, false);
+		ssd16xx_busy_wait(driver);
+		k_msleep(3000);
+		return 0;
+	}
+
+	
+	if (!gpio_pin_get(driver->trigger, SSD16XX_TRIGGER_PIN)) {
+		fading_pattern = (fading_pattern << 2) | 0x03;
+		driver->repeat_pattern = fading_pattern;
+		if (fading_pattern == 0xFF) {
+			fading_pattern = 0x00;
+		}
+	}
+	else {
+		return 0;
+	}
+	
+	if (driver->repeat_pattern == 0xFF) {
+		err = ssd16xx_clear_cntlr_mem(dev, SSD16XX_CMD_WRITE_RAM, true, false);
+	}
+	else {
+		err = ssd16xx_clear_cntlr_mem(dev, SSD16XX_CMD_WRITE_RAM, true, true);
+	}
+	if (err < 0) {
+		return err;
+	}
+	ssd16xx_busy_wait(driver);	
+
+	counter = 0;
+	while(!gpio_pin_get(driver->trigger, SSD16XX_TRIGGER_PIN)){
+		k_msleep(10);
+		counter ++;	
+	}
+	if (counter > 300) {
+		always_on = 1;
+	}
+	return 0;
 }
 
 static int ssd16xx_update_display(const struct device *dev)
@@ -416,9 +469,10 @@ static int ssd16xx_set_pixel_format(const struct device *dev,
 }
 
 static int ssd16xx_clear_cntlr_mem(const struct device *dev, uint8_t ram_cmd,
-				   bool update)
+				   bool update, bool partial)
 {
 	struct ssd16xx_data *driver = dev->data;
+	int err;
 	// uint8_t clear_page[EPD_PANEL_WIDTH];
 	uint16_t panel_h = EPD_PANEL_HEIGHT /
 			EPD_PANEL_NUMOF_ROWS_PER_PAGE;
@@ -445,6 +499,14 @@ static int ssd16xx_clear_cntlr_mem(const struct device *dev, uint8_t ram_cmd,
 
 	ssd16xx_busy_wait(driver);
 
+	if (partial) {
+		err = ssd16xx_set_ram_param(driver, 0, (xDot-1)/8,  yDot-1, 0);
+		if (err < 0) {
+			return err;
+		}
+		ssd16xx_busy_wait(driver);
+	}
+
 	if (ssd16xx_set_ram_ptr(driver, SSD16XX_PANEL_FIRST_PAGE,
 				SSD16XX_PANEL_LAST_GATE)) {
 		return -EIO;
@@ -456,13 +518,24 @@ static int ssd16xx_clear_cntlr_mem(const struct device *dev, uint8_t ram_cmd,
 
 	ssd16xx_busy_wait(driver);
 
-	if (ssd16xx_set_ram_ptr(driver, SSD16XX_PANEL_FIRST_PAGE,
-				SSD16XX_PANEL_LAST_GATE)) {
-		return -EIO;
-	}
-
-	if (ssd16xx_write_cmd(driver, SSD16XX_CMD_WRITE_RED_RAM, NULL, 200*25)) {
+	if (!partial) {
+		if (ssd16xx_set_ram_ptr(driver, SSD16XX_PANEL_FIRST_PAGE,
+					SSD16XX_PANEL_LAST_GATE)) {
 			return -EIO;
+		}
+
+		if (ssd16xx_write_cmd(driver, SSD16XX_CMD_WRITE_RED_RAM, NULL, 200*25)) {
+				return -EIO;
+		}
+		driver->update_cmd = 0xF7;
+	}
+	else {
+		driver->update_cmd = 0xFF;
+		err = ssd16xx_write_cmd(driver, SSD16XX_CMD_BWF_CTRL, boardSetting, sizeof(boardSetting));
+		if (err < 0) {
+			return err;
+		}
+		ssd16xx_busy_wait(driver);
 	}
 
 	if (update) {
@@ -583,7 +656,7 @@ static int ssd16xx_controller_init(const struct device *dev)
 	struct ssd16xx_data *driver = dev->data;
 
 	LOG_DBG("");
-	gpio_pin_set(driver->dc, SSD16XX_CS_PIN, 1);
+	gpio_pin_set(driver->cs, SSD16XX_CS_PIN, 1);
 	gpio_pin_set(driver->reset, SSD16XX_RESET_PIN, 1);
 	k_msleep(SSD16XX_RESET_DELAY);
 	gpio_pin_set(driver->reset, SSD16XX_RESET_PIN, 0);
@@ -630,37 +703,14 @@ static int ssd16xx_controller_init(const struct device *dev)
 	driver->update_cmd = 0xB1;
 	ssd16xx_update_display(dev);
 	driver->update_cmd = 0xF7;
-	gpio_pin_set(driver->dc, SSD16XX_CS_PIN, 0);
+	gpio_pin_set(driver->cs, SSD16XX_CS_PIN, 0);
 	
-	driver->repeat_pattern = 0x80;
-	err = ssd16xx_clear_cntlr_mem(dev, SSD16XX_CMD_WRITE_RAM, true);
+	driver->repeat_pattern = 0x00;
+	err = ssd16xx_clear_cntlr_mem(dev, SSD16XX_CMD_WRITE_RAM, true, false);
 	if (err < 0) {
 		return err;
 	}
 	ssd16xx_busy_wait(driver);
-
-	while (gpio_pin_get(driver->trigger, SSD16XX_TRIGGER_PIN)) {
-		k_msleep(SSD16XX_BUSY_DELAY);
-	}
-
-	while (1) {
-		driver->repeat_pattern = 0xFE;
-		err = ssd16xx_clear_cntlr_mem(dev, SSD16XX_CMD_WRITE_RAM, true);
-		if (err < 0) {
-			return err;
-		}
-		ssd16xx_busy_wait(driver);	
-
-		k_msleep(4000);
-
-		driver->repeat_pattern = 0x00;
-		err = ssd16xx_clear_cntlr_mem(dev, SSD16XX_CMD_WRITE_RAM, true);
-		if (err < 0) {
-			return err;
-		}
-		ssd16xx_busy_wait(driver);	
-		k_msleep(4000);
-	}	
 
 	LOG_INF("JOHN: SSD16xx init ok");
 	return 0;
@@ -728,7 +778,7 @@ static int ssd16xx_controller_init(const struct device *dev)
 		return -EIO;
 	}
 
-	err = ssd16xx_clear_cntlr_mem(dev, SSD16XX_CMD_WRITE_RAM, true);
+	err = ssd16xx_clear_cntlr_mem(dev, SSD16XX_CMD_WRITE_RAM, true, false);
 	if (err < 0) {
 		return err;
 	}
@@ -736,7 +786,7 @@ static int ssd16xx_controller_init(const struct device *dev)
 	ssd16xx_busy_wait(driver);
 
 	err = ssd16xx_clear_cntlr_mem(dev, SSD16XX_CMD_WRITE_RED_RAM,
-					     false);
+					     false, false);
 	if (err < 0) {
 		return err;
 	}
@@ -747,7 +797,7 @@ static int ssd16xx_controller_init(const struct device *dev)
 		return -EIO;
 	}
 
-	return ssd16xx_clear_cntlr_mem(dev, SSD16XX_CMD_WRITE_RAM, true);
+	return ssd16xx_clear_cntlr_mem(dev, SSD16XX_CMD_WRITE_RAM, true, false);
 }
 
 static int ssd16xx_init(const struct device *dev)
